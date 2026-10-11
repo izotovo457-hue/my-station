@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Станция</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  body {
+    margin:0;
+    font-family: -apple-system, Roboto, sans-serif;
+    background: var(--tg-theme-bg-color, #ffffff);
+    color: var(--tg-theme-text-color, #000000);
+    padding: 16px;
+  }
+  h1 { font-size: 20px; margin-bottom: 16px; text-align:center; }
+  .card {
+    background: var(--tg-theme-secondary-bg-color, #f2f2f2);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 12px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+  }
+  .card .label { font-size:15px; opacity:0.7; }
+  .card .value { font-size:22px; font-weight:600; }
+  .updated { text-align:center; font-size:12px; opacity:0.5; margin-top:10px; }
+</style>
+</head>
+<body>
+<h1>📡 Умная станция</h1>
+<div class="card"><span class="label">🌡 Температура</span><span class="value" id="temp">--</span></div>
+<div class="card"><span class="label">💧 Влажность</span><span class="value" id="hum">--</span></div>
+<div class="card"><span class="label">💨 Газ</span><span class="value" id="gas">--</span></div>
+<div class="card"><span class="label">💡 Свет</span><span class="value" id="light">--</span></div>
+<div class="card"><span class="label">🔊 Звук</span><span class="value" id="mic">--</span></div>
+<div class="updated" id="updated">Обновляется...</div>
+<script>
+  Telegram.WebApp.ready();
+  Telegram.WebApp.expand();
+
+  const firebaseURL = "https://tec-project-a9fee-default-rtdb.europe-west1.firebasedatabase.app/";
+
+  async function updateData() {
+    try {
+      const res = await fetch(firebaseURL);
+      const d = await res.json();
+
+      document.getElementById('temp').innerText = parseFloat(d.temp).toFixed(1) + ' °C';
+      document.getElementById('hum').innerText = parseFloat(d.hum).toFixed(1) + ' %';
+      document.getElementById('gas').innerText = d.gas;
+      document.getElementById('light').innerText = d.light;
+      document.getElementById('mic').innerText = d.mic;
+      document.getElementById('updated').innerText = 'Обновлено: ' + new Date().toLocaleTimeString();
+    } catch(e) {
+      document.getElementById('updated').innerText = 'Нет связи с облаком...';
+    }
+  }
+  updateData();
+  setInterval(updateData, 5000);
+</script>
+</body>
+</html>
