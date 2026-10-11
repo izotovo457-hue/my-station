@@ -6,57 +6,144 @@
 <title>Станция</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
+  :root { --alert: #e5484d; }
   body {
-    margin:0;
+    margin: 0;
     font-family: -apple-system, Roboto, sans-serif;
     background: var(--tg-theme-bg-color, #ffffff);
     color: var(--tg-theme-text-color, #000000);
     padding: 16px;
   }
-  h1 { font-size: 20px; margin-bottom: 16px; text-align:center; }
+  h1 { font-size: 20px; margin: 0 0 16px; text-align: center; }
+  h2 { font-size: 16px; margin: 24px 0 10px; }
   .card {
     background: var(--tg-theme-secondary-bg-color, #f2f2f2);
     border-radius: 14px;
     padding: 16px;
     margin-bottom: 12px;
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border: 2px solid transparent;
   }
-  .card .label { font-size:15px; opacity:0.7; }
-  .card .value { font-size:22px; font-weight:600; }
-  .updated { text-align:center; font-size:12px; opacity:0.5; margin-top:10px; }
+  .card.alert { border-color: var(--alert); }
+  .card .label { font-size: 15px; opacity: 0.7; }
+  .card .value { font-size: 22px; font-weight: 600; }
+  .slider-box {
+    background: var(--tg-theme-secondary-bg-color, #f2f2f2);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  .slider-head { display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 15px; }
+  .slider-head b { font-size: 18px; }
+  input[type=range] { width: 100%; height: 32px; accent-color: var(--tg-theme-button-color, #2481cc); }
+  .status { text-align: center; font-size: 12px; opacity: 0.6; margin-top: 10px; min-height: 16px; }
 </style>
 </head>
 <body>
 <h1>📡 Умная станция</h1>
+
 <div class="card"><span class="label">🌡 Температура</span><span class="value" id="temp">--</span></div>
 <div class="card"><span class="label">💧 Влажность</span><span class="value" id="hum">--</span></div>
-<div class="card"><span class="label">💨 Газ</span><span class="value" id="gas">--</span></div>
+<div class="card" id="gasCard"><span class="label">💨 Газ</span><span class="value" id="gas">--</span></div>
 <div class="card"><span class="label">💡 Свет</span><span class="value" id="light">--</span></div>
-<div class="card"><span class="label">🔊 Звук</span><span class="value" id="mic">--</span></div>
-<div class="updated" id="updated">Обновляется...</div>
+<div class="card" id="micCard"><span class="label">🔊 Звук</span><span class="value" id="mic">--</span></div>
+
+<h2>⚙️ Пороги тревог</h2>
+<div class="slider-box">
+  <div class="slider-head"><span>💨 Газ</span><b id="gasLimitVal">1000</b></div>
+  <input type="range" id="gasLimit" min="0" max="4095" step="25" value="1000">
+</div>
+<div class="slider-box">
+  <div class="slider-head"><span>🔊 Звук</span><b id="soundLimitVal">150</b></div>
+  <input type="range" id="soundLimit" min="0" max="2000" step="10" value="150">
+</div>
+
+<div class="status" id="status">Обновляется...</div>
+
 <script>
   Telegram.WebApp.ready();
   Telegram.WebApp.expand();
 
-  const firebaseURL = "https://tec-project-a9fee-default-rtdb.europe-west1.firebasedatabase.app/data.json";
+  const BASE = "https://tec-project-a9fee-default-rtdb.europe-west1.firebasedatabase.app";
+  const dataURL = BASE + "/data.json";
+  const settingsURL = BASE + "/settings.json";
+
+  const $ = id => document.getElementById(id);
+  const limits = { gas: 1000, sound: 150 };
+  const dragging = { gas: false, sound: false };
+  let lastData = null;
+
+  function setStatus(t) { $('status').innerText = t; }
+
+  function highlight() {
+    if (!lastData) return;
+    $('gasCard').classList.toggle('alert', Number(lastData.gas) > limits.gas);
+    $('micCard').classList.toggle('alert', Number(lastData.mic) > limits.sound);
+  }
+
+  function bindSlider(id, key) {
+    const el = $(id), out = $(id + 'Val');
+    el.addEventListener('input', () => {
+      dragging[key] = true;
+      out.innerText = el.value;
+    });
+    el.addEventListener('change', async () => {
+      const value = Number(el.value);
+      try {
+        const res = await fetch(settingsURL, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [key]: value })
+        });
+        if (!res.ok) throw new Error();
+        limits[key] = value;
+        highlight();
+        setStatus('Порог сохранён. Плата применит его в течение 7 секунд.');
+      } catch (e) {
+        setStatus('Не удалось сохранить порог. Проверьте связь.');
+      }
+      dragging[key] = false;
+    });
+  }
+  bindSlider('gasLimit', 'gas');
+  bindSlider('soundLimit', 'sound');
 
   async function updateData() {
-    try {
-      const res = await fetch(firebaseURL);
-      const d = await res.json();
+    try { const [dRes, sRes] = await Promise.all([fetch(dataURL), fetch(settingsURL)]);
+      const d = await dRes.json();
+      const s = await sRes.json();
 
-      document.getElementById('temp').innerText = parseFloat(d.temp).toFixed(1) + ' °C';
-      document.getElementById('hum').innerText = parseFloat(d.hum).toFixed(1) + ' %';
-      document.getElementById('gas').innerText = d.gas;
-      document.getElementById('light').innerText = d.light;
-      document.getElementById('mic').innerText = d.mic;
-      document.getElementById('updated').innerText = 'Обновлено: ' + new Date().toLocaleTimeString();
-    } catch(e) {
-      document.getElementById('updated').innerText = 'Нет связи с облаком...';
+      if (d) {
+        lastData = d;
+        $('temp').innerText = parseFloat(d.temp).toFixed(1) + ' °C';
+        $('hum').innerText = parseFloat(d.hum).toFixed(1) + ' %';
+        $('gas').innerText = d.gas;
+        $('light').innerText = d.light;
+        $('mic').innerText = d.mic;
+      }
+
+      if (s) {
+        if (!dragging.gas && s.gas !== undefined) {
+          limits.gas = Number(s.gas);
+          $('gasLimit').value = s.gas;
+          $('gasLimitVal').innerText = s.gas;
+        }
+        if (!dragging.sound && s.sound !== undefined) {
+          limits.sound = Number(s.sound);
+          $('soundLimit').value = s.sound;
+          $('soundLimitVal').innerText = s.sound;
+        }
+      }
+
+      highlight();
+      setStatus('Обновлено: ' + new Date().toLocaleTimeString());
+    } catch (e) {
+      setStatus('Нет связи с облаком...');
     }
   }
+
   updateData();
   setInterval(updateData, 5000);
 </script>
