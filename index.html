@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Станция</title>
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script async src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
   body { margin:0; padding:16px; font-family:-apple-system,Roboto,sans-serif;
          background:var(--tg-theme-bg-color,#fff); color:var(--tg-theme-text-color,#000); }
@@ -28,9 +28,6 @@
   .hero p { margin:0; font-size:13px; opacity:.7; }
   .card { background:var(--tg-theme-secondary-bg-color,#f2f2f2); border-radius:16px; padding:14px 16px;
           margin-bottom:12px; box-shadow:0 0 0 1.5px var(--c), 0 0 16px -2px var(--g); transition:box-shadow .4s; }
-  .card.s2 { animation:pulse 1.6s ease-in-out infinite; }
-  @keyframes pulse { 50% { box-shadow:0 0 0 1.5px var(--c), 0 0 28px 2px var(--g); } }
-  @media (prefers-reduced-motion:reduce) { .card.s2 { animation:none; } }
   .row { display:flex; justify-content:space-between; align-items:baseline; }
   .row span { font-size:15px; opacity:.75; }
   .row b { font-size:24px; color:var(--c); }
@@ -78,18 +75,23 @@
 <div class="foot" id="status">Обновляется...</div>
 
 <script>
-  const tg = Telegram.WebApp;
-  tg.ready(); tg.expand();
+(function () {
+  const $ = id => document.getElementById(id);
+  const tg = () => window.Telegram && Telegram.WebApp;
   const BASE = "https://tec-project-a9fee-default-rtdb.europe-west1.firebasedatabase.app";
   const S = [
-    {k:'temp', n:'🌡 Температура', u:' °C', d:1, max:50,   step:1,  lo:18,  hi:28,   low:'Холодно',          high:'Жарко'},
+    {k:'temp', n:'🌡 Температура', u:' °C', d:1, max:50,   step:1,  lo:18,  hi:28,   low:'Холодно',              high:'Жарко'},
     {k:'hum',  n:'💧 Влажность',   u:' %',  d:1, max:100,  step:1,  lo:30,  hi:60,   low:'Воздух слишком сухой', high:'Слишком влажно'},
-    {k:'light',n:'💡 Свет',        u:'',    d:0, max:4095, step:25, lo:200, hi:3800, low:'Слишком темно',    high:'Слишком ярко'},
-    {k:'gas',  n:'💨 Газ',         u:'',    d:0, max:4095, step:25, lo:0,   hi:1000, low:'Газ ниже нормы',   high:'Загрязнение воздуха'},
-    {k:'sound',n:'🔊 Звук',        u:'',    d:0, max:2000, step:10, lo:0,   hi:150,  low:'Слишком тихо',     high:'Слишком шумно'}
+    {k:'light',n:'💡 Свет',        u:'',    d:0, max:4095, step:25, lo:200, hi:3800, low:'Слишком темно',        high:'Слишком ярко'},
+    {k:'gas',  n:'💨 Газ',         u:'',    d:0, max:4095, step:25, lo:0,   hi:1000, low:'Газ ниже нормы',       high:'Загрязнение воздуха'},
+    {k:'sound',n:'🔊 Звук',        u:'',    d:0, max:2000, step:10, lo:0,   hi:150,  low:'Слишком тихо',         high:'Слишком шумно'}
   ];
-  const drag = {}, hist = {}, prev = {};
-  let data = null, lastUp = null, lastChange = 0;
+  const drag = {}, prev = {};
+  let data = null, lastUp = null, lastChange = 0, busy = false;
+
+  function showErr(m) { const s = $('status'); if (s) s.innerText = 'Ошибка: ' + m; }
+  window.onerror = (m, src, l) => showErr(m + ' (строка ' + l + ')');
+  window.onunhandledrejection = e => showErr(e.reason && e.reason.message || 'сбой запроса');
 
   // та же логика, что и в прошивке платы
   function evalState(x, v) {
@@ -102,71 +104,73 @@
     return [0, 0];
   }
 
-  const $ = id => document.getElementById(id);
-  const cards = $('cards');
-  S.forEach(x => {
-    x.hist = []; hist[x.k] = x.hist;
-    const el = document.createElement('div');
-    el.className = 'card s0'; el.id = 'c_' + x.k;
-    el.innerHTML = `
-      <div class="row"><span>${x.n}</span><b id="v_${x.k}">--</b></div>
-      <div class="msg" id="m_${x.k}">Нет данных</div>
-      <svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none"><polyline id="p_${x.k}" points=""/></svg>
-      <div class="dual" id="d_${x.k}"><div class="track"></div><div class="fill" id="f_${x.k}"></div>
-        <input type="range" id="lo_${x.k}" min="0" max="${x.max}" step="${x.step}" value="${x.lo}">
-        <input type="range" id="hi_${x.k}" min="0" max="${x.max}" step="${x.step}" value="${x.hi}">
-      </div>
-      <div class="lims"><span id="ll_${x.k}"></span><span id="lh_${x.k}"></span></div>`;
-    cards.appendChild(el);
-    const lo = $('lo_' + x.k), hi = $('hi_' + x.k);
-    const sync = which => {
-      drag[x.k] = true;
-      let l = +lo.value, h = +hi.value;
-      if (which === 'lo' && l > h - x.step) { l = h - x.step; lo.value = l; }
-      if (which === 'hi' && h < l + x.step) { h = l + x.step; hi.value = h; }
-      x.lo = Math.max(0, l); x.hi = h; paintLimits(x); paintCard(x);
-    };
-    lo.addEventListener('input', () => sync('lo'));
-    hi.addEventListener('input', () => sync('hi'));
-    const save = async () => {
-      try {
-        const r = await fetch(`${BASE}/settings/${x.k}.json`, {method:'PATCH',
-          headers:{'Content-Type':'application/json'}, body:JSON.stringify({lo:x.lo, hi:x.hi})});
-        if (!r.ok) throw 0;
-        $('status').innerText = 'Порог сохранён, плата применит его за 7 секунд';
-        tg.HapticFeedback && tg.HapticFeedback.impactOccurred('light');
-      } catch (e) { $('status').innerText = 'Не удалось сохранить порог'; }
-      drag[x.k] = false;
-    };
-    lo.addEventListener('change', save);
-    hi.addEventListener('change', save);
-    paintLimits(x);
-  });
-
   function paintLimits(x) {
     const f = $('f_' + x.k);
     f.style.left = (x.lo / x.max * 100) + '%';
     f.style.width = ((x.hi - x.lo) / x.max * 100) + '%';
     $('lo_' + x.k).value = x.lo; $('hi_' + x.k).value = x.hi;
-    $('ll_' + x.k).innerText = x.lo > 0 ? 'мин ' + x.lo : 'мин выкл';
-    $('lh_' + x.k).innerText = 'макс ' + x.hi;
+    $('ll_' + x.k).textContent = x.lo > 0 ? 'мин ' + x.lo : 'мин выкл';
+    $('lh_' + x.k).textContent = 'макс ' + x.hi;
   }
 
   function paintCard(x) {
-    const el = $('c_' + x.k);
-    const raw = data ? data[x.k] : undefined;
-    if (raw === undefined) return -1;
-    const v = parseFloat(raw);
+    if (!data || data[x.k] === undefined) return -1;
+    const v = parseFloat(data[x.k]);
     const [st, sd] = evalState(x, v);
-    el.className = 'card s' + st;
-    $('v_' + x.k).innerText = v.toFixed(x.d) + x.u;
-    $('m_' + x.k).innerText = st === 0 ? '🟢 В норме' : st === 1 ? '🟠 Близко к границе' : '🔴 ' + (sd < 0 ? x.low : x.high) + '!';
-    const h = x.hist;
-    if (h.length > 1) {
-      const mn = Math.min(...h), mx = Math.max(...h), r = (mx - mn) || 1;
-      $('p_' + x.k).setAttribute('points', h.map((p, i) => (i / (h.length - 1) * 100).toFixed(1) + ',' + (27 - (p - mn) / r * 24).toFixed(1)).join(' '));
-    }
+    $('c_' + x.k).className = 'card s' + st;
+    $('v_' + x.k).textContent = v.toFixed(x.d) + x.u;
+    $('m_' + x.k).textContent = st === 0 ? '🟢 В норме' : st === 1 ? '🟠 Близко к границе' : '🔴 ' + (sd < 0 ? x.low : x.high) + '!';
     return st;
+  }
+
+  function paintSpark(x) {
+    const h = x.hist;
+    if (h.length < 2) return;
+    let mn = h[0], mx = h[0];
+    for (const p of h) { if (p < mn) mn = p; if (p > mx) mx = p; }
+    const r = (mx - mn) || 1;
+    $('p_' + x.k).setAttribute('points', h.map((p, i) => (i / (h.length - 1) * 100).toFixed(1) + ',' + (27 - (p - mn) / r * 24).toFixed(1)).join(' '));
+  }
+
+  function build() {
+    const box = $('cards');
+    S.forEach(x => {
+      x.hist = [];
+      const el = document.createElement('div');
+      el.className = 'card s0'; el.id = 'c_' + x.k;
+      el.innerHTML =
+        '<div class="row"><span>' + x.n + '</span><b id="v_' + x.k + '">--</b></div>' +
+        '<div class="msg" id="m_' + x.k + '">Нет данных</div>' +
+        '<svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none"><polyline id="p_' + x.k + '" points=""/></svg>' +
+        '<div class="dual"><div class="track"></div><div class="fill" id="f_' + x.k + '"></div>' +
+        '<input type="range" id="lo_' + x.k + '" min="0" max="' + x.max + '" step="' + x.step + '" value="' + x.lo + '">' +
+        '<input type="range" id="hi_' + x.k + '" min="0" max="' + x.max + '" step="' + x.step + '" value="' + x.hi + '"></div>' +
+        '<div class="lims"><span id="ll_' + x.k + '"></span><span id="lh_' + x.k + '"></span></div>';
+      box.appendChild(el);
+      const lo = $('lo_' + x.k), hi = $('hi_' + x.k);
+      const move = which => {
+        drag[x.k] = true;
+        let l = +lo.value, h = +hi.value;
+        if (which === 'lo' && l > h - x.step) { l = h - x.step; lo.value = l; }
+        if (which === 'hi' && h < l + x.step) { h = l + x.step; hi.value = h; }
+        x.lo = Math.max(0, l); x.hi = h; paintLimits(x); paintCard(x);
+      };
+      const save = async () => {
+        try {
+          const r = await fetch(BASE + '/settings/' + x.k + '.json', {method:'PATCH',
+            headers:{'Content-Type':'application/json'}, body:JSON.stringify({lo:x.lo, hi:x.hi})});
+          if (!r.ok) throw new Error('код ' + r.status);
+          $('status').textContent = 'Порог сохранён, плата применит его за 10 секунд';
+          const t = tg(); if (t && t.HapticFeedback) t.HapticFeedback.impactOccurred('light');
+        } catch (e) { $('status').textContent = 'Не удалось сохранить порог'; }
+        drag[x.k] = false;
+      };
+      lo.addEventListener('input', () => move('lo'));
+      hi.addEventListener('input', () => move('hi'));
+      lo.addEventListener('change', save);
+      hi.addEventListener('change', save);
+      paintLimits(x);
+    });
   }
 
   function render() {
@@ -176,31 +180,32 @@
       const st = paintCard(x);
       if (st < 0) return;
       sum += st === 0 ? 100 : st === 1 ? 60 : 0; n++;
-      worst = Math.max(worst, st);
-      if (prev[x.k] !== undefined && st > prev[x.k] && tg.HapticFeedback)
-        tg.HapticFeedback.notificationOccurred(st === 2 ? 'error' : 'warning');
+      if (st > worst) worst = st;
+      const t = tg();
+      if (prev[x.k] !== undefined && st > prev[x.k] && t && t.HapticFeedback)
+        t.HapticFeedback.notificationOccurred(st === 2 ? 'error' : 'warning');
       prev[x.k] = st;
     });
     const score = n ? Math.round(sum / n) : 0;
-    $('score').innerText = n ? score + '%' : '--';
+    $('score').textContent = n ? score + '%' : '--';
     $('ringFg').style.strokeDashoffset = 263.9 * (1 - score / 100);
     $('hero').className = 'hero s' + worst;
-    $('heroTitle').innerText = !n ? 'Нет данных' : worst === 0 ? 'Всё в норме' : worst === 1 ? 'Есть риск' : 'Тревога!';
+    $('heroTitle').textContent = !n ? 'Нет данных' : worst === 0 ? 'Всё в норме' : worst === 1 ? 'Есть риск' : 'Тревога!';
     const on = Date.now() - lastChange < 35000;
     $('online').className = 'online' + (on ? '' : ' offline');
-    $('onlineText').innerText = on ? 'станция онлайн' : 'нет связи со станцией';
+    $('onlineText').textContent = on ? 'станция онлайн' : 'нет связи со станцией';
     if (data && data.up !== undefined) {
       const m = Math.floor(data.up / 60);
-      $('foot').innerHTML = Wi-Fi ${data.rssi} дБм<br>Работает ${Math.floor(m / 60)} ч ${m % 60} мин;
+      $('foot').textContent = 'Wi-Fi ' + data.rssi + ' дБм, работает ' + Math.floor(m / 60) + ' ч ' + (m % 60) + ' мин';
     }
   }
 
   async function update() {
+    if (busy || document.hidden) return;
+    busy = true;
     try {
-      const [d, s] = await Promise.all([
-        fetch(BASE + '/data.json').then(r => r.json()),
-        fetch(BASE + '/settings.json').then(r => r.json())
-      ]);
+      const all = await (await fetch(BASE + '/.json')).json();   // один запрос: данные и пороги
+      const d = all && all.data, s = all && all.settings;
       if (s) S.forEach(x => {
         const o = s[x.k];
         if (o && typeof o === 'object' && !drag[x.k]) { x.lo = +o.lo; x.hi = +o.hi; }
@@ -208,16 +213,29 @@
       if (d) {
         if (d.up !== lastUp) {
           lastUp = d.up; lastChange = Date.now();
-          S.forEach(x => { if (d[x.k] !== undefined) { x.hist.push(parseFloat(d[x.k])); if (x.hist.length > 40) x.hist.shift(); } });
+          S.forEach(x => {
+            if (d[x.k] === undefined) return;
+            x.hist.push(parseFloat(d[x.k]));
+            if (x.hist.length > 40) x.hist.shift();
+            paintSpark(x);
+          });
         }
         data = d;
       }
       render();
-      if (!drag.any) $('status').innerText = 'Обновлено: ' + new Date().toLocaleTimeString();
-    } catch (e) { $('status').innerText = 'Нет связи с облаком...'; }
+      $('status').textContent = 'Обновлено: ' + new Date().toLocaleTimeString();
+    } catch (e) { $('status').textContent = 'Нет связи с облаком...'; }
+    busy = false;
   }
-  update();
-  setInterval(update, 5000);
+
+  try {
+    build();
+    lastChange = Date.now();
+    update();
+    setInterval(update, 5000);
+    window.addEventListener('load', () => { const t = tg(); if (t) { t.ready(); t.expand(); } });
+  } catch (e) { showErr(e.message); }
+})();
 </script>
 </body>
 </html>
