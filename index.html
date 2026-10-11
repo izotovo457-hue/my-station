@@ -46,6 +46,8 @@
         border-radius:50%; background:#fff; border:3px solid var(--c); box-shadow:0 1px 4px rgba(0,0,0,.3); }
   .dual input::-moz-range-thumb { pointer-events:auto; width:18px; height:18px; border-radius:50%;
         background:#fff; border:3px solid var(--c); }
+  body.view .dual input { display:none; }
+  #role { margin:-4px 0 12px; }
   .lims { display:flex; justify-content:space-between; font-size:12px; opacity:.7; margin-top:2px; }
   .foot { text-align:center; font-size:12px; opacity:.55; margin-top:8px; line-height:1.6; }
 </style>
@@ -70,6 +72,7 @@
   </div>
 </div>
 
+<div class="foot" id="role"></div>
 <div id="cards"></div>
 <div class="foot" id="foot"></div>
 <div class="foot" id="status">Обновляется...</div>
@@ -86,8 +89,19 @@
     {k:'gas',  n:'💨 Газ',         u:'',    d:0, max:4095, step:25, lo:0,   hi:1000, low:'Газ ниже нормы',       high:'Загрязнение воздуха'},
     {k:'sound',n:'🔊 Звук',        u:'',    d:0, max:2000, step:10, lo:0,   hi:150,  low:'Слишком тихо',         high:'Слишком шумно'}
   ];
+  const ADMIN_ID = 1143490861;   // Telegram ID администратора
   const drag = {}, prev = {};
   let data = null, lastUp = null, lastChange = 0, busy = false;
+
+  function isAdmin() {
+    const t = tg(), u = t && t.initDataUnsafe && t.initDataUnsafe.user;
+    return !!u && u.id === ADMIN_ID;
+  }
+  function applyRole() {
+    const a = isAdmin();
+    document.body.classList.toggle('view', !a);
+    $('role').textContent = a ? '🔑 Вы администратор: можно менять пороги' : '👁 Режим просмотра: пороги меняет администратор';
+  }
 
   function showErr(m) { const s = $('status'); if (s) s.innerText = 'Ошибка: ' + m; }
   window.onerror = (m, src, l) => showErr(m + ' (строка ' + l + ')');
@@ -156,6 +170,7 @@
         x.lo = Math.max(0, l); x.hi = h; paintLimits(x); paintCard(x);
       };
       const save = async () => {
+        if (!isAdmin()) { drag[x.k] = false; return; }
         try {
           const r = await fetch(BASE + '/settings/' + x.k + '.json', {method:'PATCH',
             headers:{'Content-Type':'application/json'}, body:JSON.stringify({lo:x.lo, hi:x.hi})});
@@ -174,6 +189,7 @@
   }
 
   function render() {
+    applyRole();
     let sum = 0, n = 0, worst = 0;
     S.forEach(x => {
       if (!drag[x.k]) paintLimits(x);
@@ -230,6 +246,7 @@
 
   try {
     build();
+    applyRole();
     lastChange = Date.now();
     update();
     setInterval(update, 5000);
